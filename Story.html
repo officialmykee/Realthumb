@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Sarah's Story</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; }
+
+  html, body {
+    width: 100%; height: 100%;
+    /* KEY FIX 1: background #000 so no white shows behind anything */
+    background: #000;
+    overflow: hidden;
+    font-family: 'Inter', sans-serif;
+    /* KEY FIX 2: position fixed so viewport resizes (keyboard) don't reflow the page */
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+  }
+
+  body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .story {
+    width: 100%;
+    /* KEY FIX 3: use 100% of parent height, NOT 100vh/dvh — avoids reflowing when keyboard appears */
+    height: 100%;
+    max-width: 430px;
+    position: relative;
+    overflow: hidden;
+    background: #111;
+    cursor: pointer;
+    user-select: none;
+    touch-action: manipulation;
+  }
+
+  /* The photo fills the full story — no bottom cutoff for the black bar */
+  .bg-photo {
+    position: absolute;
+    inset: 0;
+    background-size: cover;
+    background-position: center top;
+    z-index: 0;
+  }
+  .bg-photo::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to bottom,
+      rgba(0,0,0,0.72) 0%,
+      rgba(0,0,0,0.08) 30%,
+      rgba(0,0,0,0.08) 70%,
+      rgba(0,0,0,0.55) 100%
+    );
+    z-index: 1;
+  }
+
+  /* Black safe-area bar sits on top of image at the bottom */
+  .bottom-bar {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: calc(env(safe-area-inset-bottom, 0px) + 84px);
+    background: #000;
+    z-index: 1;
+  }
+
+  .expand-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0);
+    z-index: 9;
+    pointer-events: none;
+    transition: background 0.3s ease;
+  }
+  .story.expanded .expand-overlay {
+    background: rgba(0,0,0,0.4);
+    pointer-events: all;
+  }
+
+  .ui {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+  }
+
+  .progress-bars {
+    position: absolute;
+    top: 10px;
+    left: 8px; right: 8px;
+    display: flex;
+    gap: 3px;
+    pointer-events: none;
+  }
+  .bar-track {
+    flex: 1;
+    height: 1.5px;
+    background: rgba(255,255,255,0.35);
+    border-radius: 1px;
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    background: #fff;
+    border-radius: 1px;
+    width: 0%;
+  }
+
+  .header {
+    position: absolute;
+    top: 22px;
+    left: 12px; right: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    pointer-events: all;
+  }
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .avatar {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #a855f7, #3b82f6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .avatar-icon {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    height: 18px;
+  }
+  .avatar-icon span {
+    display: block;
+    width: 3px;
+    background: #fff;
+    border-radius: 2px;
+  }
+  .avatar-icon span:nth-child(1) { height: 8px; }
+  .avatar-icon span:nth-child(2) { height: 14px; }
+  .avatar-icon span:nth-child(3) { height: 10px; }
+  .avatar-icon span:nth-child(4) { height: 6px; }
+
+  .header-name {
+    font-size: 13px;
+    font-weight: 700;
+    color: #fff;
+  }
+  .header-sub {
+    font-size: 11px;
+    color: rgba(255,255,255,0.55);
+    margin-top: 1px;
+  }
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .header-actions button {
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.85);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 4px;
+    line-height: 1;
+  }
+
+  .pause-indicator {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+  }
+  .pause-indicator.visible { opacity: 1; }
+
+  /* KEY FIX 4: reply-bar uses position:absolute within story, not fixed.
+     We only adjust its 'bottom' via JS when keyboard is open.
+     This prevents any layout reflow touching the story image. */
+  .reply-bar {
+    position: absolute;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 20px);
+    left: 12px;
+    right: 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    pointer-events: all;
+    z-index: 10;
+    /* Only animate left/right for expand, NOT bottom — JS handles bottom */
+    transition:
+      left   0.32s cubic-bezier(0.4,0,0.2,1),
+      right  0.32s cubic-bezier(0.4,0,0.2,1);
+  }
+
+  .story.expanded .reply-bar {
+    left: 0;
+    right: 0;
+  }
+
+  .reply-input {
+    flex: 1;
+    height: 44px;
+    background: rgba(255,255,255,0.12);
+    border-radius: 22px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 16px;
+    backdrop-filter: blur(6px);
+    cursor: text;
+    overflow: hidden;
+    transition:
+      border-radius 0.3s cubic-bezier(0.4,0,0.2,1),
+      height        0.3s cubic-bezier(0.4,0,0.2,1),
+      padding       0.3s cubic-bezier(0.4,0,0.2,1),
+      background    0.3s ease;
+  }
+
+  .story.expanded .reply-input {
+    border-radius: 0;
+    height: auto;
+    min-height: 44px;
+    max-height: 180px;
+    padding: 10px 16px;
+    background: rgba(20,20,20,0.97);
+    align-items: flex-end;
+  }
+
+  .emoji-icon {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    opacity: 0.5;
+    cursor: pointer;
+    margin-bottom: 0;
+  }
+
+  .placeholder-text {
+    font-size: 15px;
+    color: rgba(255,255,255,0.45);
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  .story.expanded .placeholder-text {
+    display: none;
+  }
+
+  .reply-editable {
+    flex: 1;
+    min-height: 24px;
+    max-height: 140px;
+    overflow-y: auto;
+    font-size: 15px;
+    color: #fff;
+    outline: none;
+    word-break: break-word;
+    white-space: pre-wrap;
+    line-height: 1.6;
+    caret-color: #fff;
+    display: none;
+    scrollbar-width: none;
+  }
+  .reply-editable::-webkit-scrollbar { display: none; }
+  .reply-editable:empty::before {
+    content: attr(data-placeholder);
+    color: rgba(255,255,255,0.35);
+    pointer-events: none;
+  }
+
+  .story.expanded .reply-editable {
+    display: block;
+  }
+
+  .send-icon {
+    display: none;
+    flex-shrink: 0;
+    align-items: flex-end;
+    padding-bottom: 2px;
+    cursor: pointer;
+    opacity: 0.5;
+    transition: opacity 0.15s ease;
+  }
+  .send-icon:hover { opacity: 1; }
+  .send-icon svg {
+    width: 26px;
+    height: 26px;
+  }
+  .story.expanded .send-icon {
+    display: flex;
+  }
+
+  .heart-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 6px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: all;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+  }
+  .story.expanded .heart-btn {
+    display: none;
+  }
+</style>
+</head>
+<body>
+<div class="story" id="story">
+
+  <div class="bg-photo" id="bgPhoto"></div>
+  <div class="bottom-bar"></div>
+
+  <div class="expand-overlay" id="expandOverlay"></div>
+
+  <div class="ui">
+    <div class="progress-bars" id="progressBars"></div>
+    <div class="header">
+      <div class="header-left">
+        <div class="avatar">
+          <div class="avatar-icon"><span></span><span></span><span></span><span></span></div>
+        </div>
+        <div>
+          <div class="header-name">Sarah</div>
+          <div class="header-sub">2 minutes ago</div>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button>···</button>
+        <button id="closeBtn">✕</button>
+      </div>
+    </div>
+    <div class="pause-indicator" id="pauseIndicator"></div>
+  </div>
+
+  <div class="reply-bar" id="replyBar">
+
+    <div class="reply-input" id="replyInput">
+      <div class="emoji-icon">
+        <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24"><g fill="none"><circle cx="12" cy="12" r="10" stroke="#888" stroke-width="1.5"/><path stroke="#888" stroke-linecap="round" stroke-width="1.5" d="M9 16c.85.63 1.885 1 3 1s2.15-.37 3-1"/><path fill="#888" d="M16 10.5c0 .828-.448 1.5-1 1.5s-1-.672-1-1.5.448-1.5 1-1.5 1 .672 1 1.5Z"/><ellipse cx="9" cy="10.5" fill="#888" rx="1" ry="1.5"/></g></svg>
+      </div>
+
+      <span class="placeholder-text">Reply privately...</span>
+
+      <div
+        class="reply-editable"
+        id="replyEditable"
+        contenteditable="false"
+        role="textbox"
+        aria-multiline="true"
+        aria-label="Reply privately"
+        data-placeholder="Reply privately..."
+      ></div>
+
+      <div class="send-icon" id="sendIcon">
+        <svg fill="#888888" version="1.1" xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="-66.65 -66.65 739.24 739.24"><g><g><path d="M435.099,0c-45.632,0-88.544,17.777-120.822,50.055L50.036,314.276c-66.603,66.622-66.603,175.018,0,241.64 c32.269,32.259,75.171,50.026,120.808,50.026s88.544-17.768,120.812-50.026l19.757-19.751l-12.321,0.588 c-0.062,0.005-0.728,0.033-1.889,0.033c-5.709,0-25.776-0.746-44.309-10.312l-2.815-1.454l-2.43,2.027 c-21.425,17.915-48.706,27.779-76.806,27.779c-32.034,0-62.118-12.432-84.714-35.009c-22.592-22.591-35.037-52.68-35.037-84.724 s12.445-62.127,35.037-84.724L350.37,86.149c22.592-22.591,52.685-35.037,84.729-35.037c32.04,0,62.128,12.446,84.724,35.037 c46.666,46.703,46.666,122.696,0.005,169.399L354.798,420.19c-8.291,8.306-19.771,12.881-32.331,12.881 c-13.641,0-26.847-5.394-36.242-14.808c-9.018-9.008-14.181-21.563-14.176-34.463c0-12.604,4.776-24.304,13.431-32.938 L432.541,204.36l-36.099-36.094L249.366,314.75c-18.479,18.479-28.539,43.284-28.334,69.84 c0.206,26.444,10.538,51.222,29.09,69.772c18.871,18.867,45.226,29.687,72.321,29.687c26.244,0,50.566-9.863,68.486-27.765 l164.986-164.628c66.589-66.631,66.589-175.018,0-241.601C523.643,17.777,480.731,0,435.099,0z"/></g></g></svg>
+      </div>
+    </div>
+
+    <button class="heart-btn" id="heartBtn" onclick="toggleHeart(event)">
+      <svg id="heartSvg" xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24"
+           fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="1.7"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+      </svg>
+    </button>
+
+  </div>
+
+</div>
+
+<script>
+  var STORIES = [
+    { image: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=800&q=80' },
+    { image: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800&q=80' },
+    { image: 'https://images.unsplash.com/photo-1506157786151-b8491531f063?w=800&q=80' },
+  ];
+
+  var DURATION    = 6000;
+  var currentIndex = 0;
+  var raf         = null;
+  var paused      = false;
+  var pausedAt    = 0;
+  var storyStart  = 0;
+  var lastNavTime = 0;
+  var NAV_COOLDOWN = 250;
+  var isExpanded  = false;
+
+  var bgPhoto        = document.getElementById('bgPhoto');
+  var storyEl        = document.getElementById('story');
+  var pauseIndicator = document.getElementById('pauseIndicator');
+  var progressBarsEl = document.getElementById('progressBars');
+  var replyInput     = document.getElementById('replyInput');
+  var replyEditable  = document.getElementById('replyEditable');
+  var expandOverlay  = document.getElementById('expandOverlay');
+  var replyBar       = document.getElementById('replyBar');
+
+  // Compute the CSS default bottom so we can restore it on collapse
+  function getDefaultBottom() {
+    var safeArea = 0;
+    try {
+      var computed = getComputedStyle(document.documentElement).getPropertyValue('--sab');
+      // fallback: we rely on inline style reset
+    } catch(e) {}
+    return null; // null = let CSS calc() handle it
+  }
+
+  function buildBars() {
+    progressBarsEl.innerHTML = '';
+    STORIES.forEach(function(_, i) {
+      var track = document.createElement('div');
+      track.className = 'bar-track';
+      var fill = document.createElement('div');
+      fill.className = 'bar-fill';
+      fill.id = 'bar-' + i;
+      track.appendChild(fill);
+      progressBarsEl.appendChild(track);
+    });
+  }
+
+  function setBarStates() {
+    STORIES.forEach(function(_, i) {
+      var fill = document.getElementById('bar-' + i);
+      if (fill) fill.style.width = i < currentIndex ? '100%' : '0%';
+    });
+  }
+
+  function loadStory(index) {
+    cancelAnimationFrame(raf);
+    raf = null;
+    currentIndex = index;
+    paused = false;
+    pausedAt = 0;
+    storyStart = performance.now();
+    bgPhoto.style.backgroundImage = "url('" + STORIES[index].image + "')";
+    setBarStates();
+    raf = requestAnimationFrame(tick);
+  }
+
+  function tick() {
+    if (paused) return;
+    var elapsed = performance.now() - storyStart;
+    var pct = Math.min(elapsed / DURATION * 100, 100);
+    var bar = document.getElementById('bar-' + currentIndex);
+    if (bar) bar.style.width = pct + '%';
+    if (pct < 100) {
+      raf = requestAnimationFrame(tick);
+    } else {
+      raf = null;
+      if (currentIndex < STORIES.length - 1) loadStory(currentIndex + 1);
+    }
+  }
+
+  buildBars();
+  loadStory(0);
+
+  function expandReply() {
+    if (isExpanded) return;
+    isExpanded = true;
+    storyEl.classList.add('expanded');
+
+    paused = true;
+    pausedAt = performance.now() - storyStart;
+    cancelAnimationFrame(raf);
+    raf = null;
+
+    replyEditable.contentEditable = 'true';
+
+    setTimeout(function() {
+      replyEditable.focus();
+      var range = document.createRange();
+      var sel   = window.getSelection();
+      range.selectNodeContents(replyEditable);
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }, 50);
+  }
+
+  function collapseReply() {
+    if (!isExpanded) return;
+    isExpanded = false;
+    storyEl.classList.remove('expanded');
+
+    replyEditable.contentEditable = 'false';
+    replyEditable.innerHTML = '';
+
+    // KEY FIX 5: clear inline bottom so CSS calc() takes over again
+    replyBar.style.bottom = '';
+
+    paused = false;
+    storyStart = performance.now() - pausedAt;
+    raf = requestAnimationFrame(tick);
+  }
+
+  // KEY FIX 6: visualViewport listener only adjusts reply-bar bottom,
+  // never touches the story image or any layout container.
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', function() {
+      if (!isExpanded) return;
+      var vvHeight = window.visualViewport.height;
+      var vvTop    = window.visualViewport.offsetTop;
+      // How much the keyboard is covering from the bottom of the story container
+      var storyRect = storyEl.getBoundingClientRect();
+      // Distance from viewport bottom to story bottom
+      var keyboardHeight = (storyRect.bottom) - (vvTop + vvHeight);
+      if (keyboardHeight > 50) {
+        replyBar.style.bottom = (keyboardHeight + 8) + 'px';
+      } else {
+        replyBar.style.bottom = '';
+      }
+    });
+  }
+
+  replyInput.addEventListener('click', function(e) {
+    e.stopPropagation();
+    expandReply();
+  });
+  replyInput.addEventListener('touchend', function(e) {
+    e.stopPropagation();
+    expandReply();
+  });
+
+  expandOverlay.addEventListener('click', function(e) {
+    e.stopPropagation();
+    collapseReply();
+  });
+  expandOverlay.addEventListener('touchend', function(e) {
+    e.stopPropagation();
+    collapseReply();
+  });
+
+  replyBar.addEventListener('click',    function(e) { e.stopPropagation(); });
+  replyBar.addEventListener('touchend', function(e) { e.stopPropagation(); });
+
+  document.getElementById('closeBtn').addEventListener('click', function(e) {
+    e.stopPropagation();
+    if (isExpanded) collapseReply();
+  });
+
+  var holdTimer = null;
+  var isHeld    = false;
+  var isTouch   = false;
+
+  function onDown(e) {
+    if (isExpanded) return;
+    if (e.type === 'touchstart') isTouch = true;
+    if (e.type === 'mousedown' && isTouch) return;
+    if (e.target.closest('.reply-bar') || e.target.closest('.header-actions') || e.target.closest('.expand-overlay')) return;
+
+    isHeld = false;
+    holdTimer = setTimeout(function() {
+      isHeld = true;
+      paused = true;
+      pausedAt = performance.now() - storyStart;
+      cancelAnimationFrame(raf);
+      raf = null;
+      pauseIndicator.classList.add('visible');
+    }, 180);
+  }
+
+  function onUp(e) {
+    if (isExpanded) return;
+    var now = performance.now();
+    if (e.type === 'mouseup' && isTouch) { isTouch = false; return; }
+    if (e.target.closest('.reply-bar') || e.target.closest('.header-actions') || e.target.closest('.expand-overlay')) return;
+    clearTimeout(holdTimer);
+
+    if (isHeld) {
+      isHeld = false;
+      paused = false;
+      pauseIndicator.classList.remove('visible');
+      storyStart = performance.now() - pausedAt;
+      raf = requestAnimationFrame(tick);
+    } else {
+      if (now - lastNavTime < NAV_COOLDOWN) return;
+      lastNavTime = now;
+      var rect    = storyEl.getBoundingClientRect();
+      var clientX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
+      var x       = clientX - rect.left;
+      if (x < rect.width * 0.35) {
+        loadStory(currentIndex > 0 ? currentIndex - 1 : 0);
+      } else {
+        if (currentIndex < STORIES.length - 1) loadStory(currentIndex + 1);
+      }
+    }
+  }
+
+  storyEl.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+  storyEl.addEventListener('touchstart',  onDown, { passive: true });
+  storyEl.addEventListener('touchend',    onUp,   { passive: true });
+  storyEl.addEventListener('mousedown',   onDown);
+  storyEl.addEventListener('mouseup',     onUp);
+
+  var liked = false;
+  function toggleHeart(e) {
+    e.stopPropagation();
+    liked = !liked;
+    var svg = document.getElementById('heartSvg');
+    svg.setAttribute('fill',   liked ? '#ff4d6d' : 'none');
+    svg.setAttribute('stroke', liked ? '#ff4d6d' : 'rgba(255,255,255,0.85)');
+    svg.style.transition = 'transform 0.15s ease';
+    svg.style.transform  = 'scale(1.4)';
+    setTimeout(function() { svg.style.transform = 'scale(1)'; }, 150);
+  }
+</script>
+</body>
+</html>
+
